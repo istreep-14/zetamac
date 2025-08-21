@@ -1,4 +1,4 @@
-// Zetamac Coach Content Script
+// Zetamac Coach Content Script - Fixed Version
 console.log('Zetamac Coach: Content script loaded');
 
 class ZetamacCoach {
@@ -9,7 +9,8 @@ class ZetamacCoach {
       startTime: null,
       sessionData: null,
       questionCount: 0,
-      lastQuestionTime: null
+      lastQuestionTime: null,
+      previousQuestion: '' // Track previous question to avoid duplicates
     };
     
     this.config = {
@@ -42,8 +43,10 @@ class ZetamacCoach {
   
   async loadSettings() {
     try {
-      const result = await chrome.storage.sync.get(['sheetsUrl']);
+      const result = await chrome.storage.sync.get(['sheetsUrl', 'autoUpload']);
       this.sheetsUrl = result.sheetsUrl;
+      this.autoUpload = result.autoUpload !== false; // Default to true
+      console.log('Zetamac Coach: Settings loaded', { sheetsUrl: !!this.sheetsUrl, autoUpload: this.autoUpload });
     } catch (error) {
       console.log('Zetamac Coach: No settings found, first run');
     }
@@ -60,55 +63,77 @@ class ZetamacCoach {
     const score = document.querySelector('#nbrs');
     const question = document.querySelector('#question');
     
-    if (!timer || !score || !question) return;
+    if (!timer || !score || !question) {
+      console.log('Zetamac Coach: Required elements not found', { 
+        timer: !!timer, 
+        score: !!score, 
+        question: !!question 
+      });
+      return;
+    }
     
-    const timerValue = parseInt(timer.textContent);
-    const scoreValue = parseInt(score.textContent);
+    const timerValue = parseInt(timer.textContent) || 0;
+    const scoreValue = parseInt(score.textContent) || 0;
     const questionText = question.textContent.trim();
     
-    // Game started
-    if (timerValue > 0 && !this.gameState.isPlaying) {
+    // Game started - timer is counting down and greater than 0
+    if (timerValue > 0 && timerValue < 120 && !this.gameState.isPlaying) {
       this.startGame(timerValue, scoreValue, questionText);
     }
     
-    // Game ended
+    // Game ended - timer reached 0 while we were playing
     if (timerValue === 0 && this.gameState.isPlaying) {
       this.endGame(scoreValue);
     }
     
-    // Question answered (score increased)
-    if (this.gameState.isPlaying && scoreValue > this.gameState.currentScore) {
+    // Question answered - score increased or question changed
+    if (this.gameState.isPlaying && 
+        (scoreValue > this.gameState.currentScore || 
+         (questionText !== this.gameState.previousQuestion && questionText !== ''))) {
       this.questionAnswered(scoreValue, questionText);
     }
     
     // Update current state
     if (this.gameState.isPlaying) {
       this.gameState.currentScore = scoreValue;
+      this.gameState.previousQuestion = questionText;
     }
   }
   
   startGame(timer, score, question) {
-    console.log('Zetamac Coach: Game started');
+    console.log('Zetamac Coach: Game started', { timer, score, question });
     
+    const now = Date.now();
     this.gameState.isPlaying = true;
-    this.gameState.startTime = Date.now();
+    this.gameState.startTime = now;
     this.gameState.currentScore = score;
     this.gameState.questionCount = 0;
-    this.gameState.lastQuestionTime = Date.now();
+    this.gameState.lastQuestionTime = now;
+    this.gameState.previousQuestion = question;
     
     // Initialize session data
     this.gameState.sessionData = {
       startTime: this.gameState.startTime,
       gameMode: this.detectGameMode(),
       questions: [],
-      duration: timer * 1000 // Convert to milliseconds
+      duration: timer * 1000, // Convert to milliseconds
+      initialScore: score
     };
     
     // Show recording indicator
     this.recordingDot.style.display = 'block';
+    
+    // Log first question if exists
+    if (question && question !== '') {
+      this.questionAnswered(score, question);
+    }
   }
   
   questionAnswered(newScore, questionText) {
+    if (!questionText || questionText === '') {
+      return; // Skip empty questions
+    }
+    
     const now = Date.now();
     const responseTime = now - this.gameState.lastQuestionTime;
     
@@ -119,17 +144,18 @@ class ZetamacCoach {
       question: questionText,
       responseTime: responseTime,
       timestamp: this.gameState.lastQuestionTime,
-      questionNumber: this.gameState.questionCount
+      questionNumber: this.gameState.questionCount,
+      score: newScore
     };
     
     this.gameState.sessionData.questions.push(questionData);
     this.gameState.lastQuestionTime = now;
     
-    console.log(`Question ${this.gameState.questionCount}: ${questionText} (${responseTime}ms)`);
+    console.log(`Zetamac Coach: Question ${this.gameState.questionCount}: ${questionText} (${responseTime}ms) Score: ${newScore}`);
   }
   
   async endGame(finalScore) {
-    console.log('Zetamac Coach: Game ended');
+    console.log('Zetamac Coach: Game ended', { finalScore });
     
     this.gameState.isPlaying = false;
     this.recordingDot.style.display = 'none';
@@ -144,15 +170,24 @@ class ZetamacCoach {
       actualDuration: totalTime,
       finalScore: finalScore,
       totalQuestions: this.gameState.questionCount,
-      avgResponseTime: this.calculateAverageResponseTime()
+      avgResponseTime: this.calculateAverageResponseTime(),
+      scoreGained: finalScore - (this.gameState.sessionData.initialScore || 0)
     };
+    
+    console.log('Zetamac Coach: Session data prepared:', sessionData);
     
     // Save to local storage
     await this.saveSession(sessionData);
     
-    // Send to Google Sheets
-    if (this.sheetsUrl) {
+    // Send to Google Sheets if configured and auto-upload is enabled
+    if (this.sheetsUrl && this.autoUpload) {
+      console.log('Zetamac Coach: Sending to Google Sheets...');
       await this.sendToGoogleSheets(sessionData);
+    } else {
+      console.log('Zetamac Coach: Skipping Google Sheets upload', { 
+        hasUrl: !!this.sheetsUrl, 
+        autoUpload: this.autoUpload 
+      });
     }
     
     // Show notification
@@ -163,18 +198,23 @@ class ZetamacCoach {
     if (this.gameState.sessionData.questions.length === 0) return 0;
     
     const totalTime = this.gameState.sessionData.questions
-      .reduce((sum, q) => sum + q.responseTime, 0);
+      .reduce((sum, q) => sum + (q.responseTime || 0), 0);
     
     return Math.round(totalTime / this.gameState.sessionData.questions.length);
   }
   
   detectGameMode() {
     const urlParams = new URLSearchParams(window.location.search);
-    const key = urlParams.get('key') || 'default';
+    const key = urlParams.get('key');
     
-    // Try to determine mode from URL or page elements
-    // For now, just return the key - we can enhance this later
-    return key;
+    // Check URL parameters for game mode
+    if (key) return key;
+    
+    // Check for arithmetic mode indicators
+    const currentUrl = window.location.href;
+    if (currentUrl.includes('arithmetic')) return 'arithmetic';
+    
+    return 'default';
   }
   
   async saveSession(sessionData) {
@@ -183,18 +223,24 @@ class ZetamacCoach {
       const result = await chrome.storage.local.get(['sessions']);
       const sessions = result.sessions || [];
       
-      // Add new session
-      sessions.push(sessionData);
+      // Add new session with timestamp for easy identification
+      const sessionWithId = {
+        ...sessionData,
+        id: Date.now(),
+        saved: new Date().toISOString()
+      };
       
-      // Keep only last 50 sessions locally
-      if (sessions.length > 50) {
-        sessions.splice(0, sessions.length - 50);
+      sessions.push(sessionWithId);
+      
+      // Keep only last 100 sessions locally (increased from 50)
+      if (sessions.length > 100) {
+        sessions.splice(0, sessions.length - 100);
       }
       
       // Save back to storage
       await chrome.storage.local.set({ sessions: sessions });
       
-      console.log('Zetamac Coach: Session saved locally');
+      console.log('Zetamac Coach: Session saved locally', { sessionId: sessionWithId.id });
     } catch (error) {
       console.error('Zetamac Coach: Error saving session:', error);
     }
@@ -207,15 +253,20 @@ class ZetamacCoach {
     }
     
     try {
+      // Prepare payload with all necessary data
       const payload = {
         timestamp: new Date(sessionData.startTime).toISOString(),
-        gameMode: sessionData.gameMode,
-        finalScore: sessionData.finalScore,
-        totalQuestions: sessionData.totalQuestions,
-        duration: Math.round(sessionData.actualDuration / 1000), // Convert to seconds
-        avgResponseTime: sessionData.avgResponseTime,
-        questions: JSON.stringify(sessionData.questions) // Raw question data
+        gameMode: sessionData.gameMode || 'unknown',
+        finalScore: sessionData.finalScore || 0,
+        totalQuestions: sessionData.totalQuestions || 0,
+        duration: Math.round((sessionData.actualDuration || 0) / 1000), // Convert to seconds
+        avgResponseTime: sessionData.avgResponseTime || 0,
+        scoreGained: sessionData.scoreGained || 0,
+        questionsData: JSON.stringify(sessionData.questions || []), // Raw question data
+        sessionId: sessionData.id || Date.now()
       };
+      
+      console.log('Zetamac Coach: Sending payload to Sheets:', payload);
       
       // Send through background script to avoid CORS issues
       const response = await chrome.runtime.sendMessage({
@@ -224,13 +275,18 @@ class ZetamacCoach {
         data: payload
       });
       
-      if (response.success) {
-        console.log('Zetamac Coach: Data sent to Google Sheets');
+      console.log('Zetamac Coach: Sheets response:', response);
+      
+      if (response && response.success) {
+        console.log('Zetamac Coach: Data sent to Google Sheets successfully');
+        this.showStatus('✅ Data sent to Google Sheets', 'success');
       } else {
-        console.error('Zetamac Coach: Failed to send to Google Sheets:', response.error);
+        console.error('Zetamac Coach: Failed to send to Google Sheets:', response?.error || 'Unknown error');
+        this.showStatus('❌ Failed to send to Google Sheets: ' + (response?.error || 'Unknown error'), 'error');
       }
     } catch (error) {
       console.error('Zetamac Coach: Error sending to Google Sheets:', error);
+      this.showStatus('❌ Error sending to Google Sheets: ' + error.message, 'error');
     }
   }
   
@@ -238,7 +294,8 @@ class ZetamacCoach {
     const notification = document.createElement('div');
     notification.className = 'zetamac-notification-popup';
     
-    const questionsPerMinute = Math.round((sessionData.totalQuestions / (sessionData.actualDuration / 1000)) * 60);
+    const questionsPerMinute = sessionData.actualDuration > 0 ? 
+      Math.round((sessionData.totalQuestions / (sessionData.actualDuration / 1000)) * 60) : 0;
     
     notification.innerHTML = `
       <div class="notification-header">🎯 Session Complete!</div>
@@ -247,6 +304,7 @@ class ZetamacCoach {
         <div>Questions: <strong>${sessionData.totalQuestions}</strong></div>
         <div>Avg Time: <strong>${sessionData.avgResponseTime}ms</strong></div>
         <div>Rate: <strong>${questionsPerMinute}/min</strong></div>
+        ${this.sheetsUrl ? '<div style="grid-column: span 2; text-align: center; font-size: 12px; color: #6c757d; margin-top: 8px;">📊 Data sent to Google Sheets</div>' : ''}
       </div>
     `;
     
@@ -261,6 +319,37 @@ class ZetamacCoach {
         }, 500);
       }
     }, this.config.notificationDuration);
+  }
+  
+  showStatus(message, type) {
+    console.log(`Zetamac Coach Status (${type}):`, message);
+    
+    // Create a temporary status element
+    const statusEl = document.createElement('div');
+    statusEl.style.cssText = `
+      position: fixed;
+      top: 60px;
+      right: 20px;
+      z-index: 10002;
+      padding: 10px 15px;
+      border-radius: 4px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      max-width: 300px;
+      word-wrap: break-word;
+      ${type === 'success' ? 'background: #d4edda; color: #155724; border: 1px solid #c3e6cb;' : ''}
+      ${type === 'error' ? 'background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb;' : ''}
+    `;
+    statusEl.textContent = message;
+    
+    document.body.appendChild(statusEl);
+    
+    // Auto-remove after 4 seconds
+    setTimeout(() => {
+      if (statusEl.parentNode) {
+        statusEl.remove();
+      }
+    }, 4000);
   }
 }
 
