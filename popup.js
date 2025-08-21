@@ -43,20 +43,27 @@ async function testConnection() {
   showStatus('Testing connection...', 'warning');
   
   try {
-    const formData = new URLSearchParams();
-    Object.keys(testData).forEach(key => {
-      formData.append(key, testData[key]);
+    const testData = {
+      timestamp: new Date().toISOString(),
+      gameMode: 'test',
+      finalScore: 0,
+      totalQuestions: 0,
+      duration: 0,
+      avgResponseTime: 0,
+      questions: JSON.stringify([])
+    };
+    
+    // Send through background script
+    const response = await chrome.runtime.sendMessage({
+      type: 'testConnection',
+      url: sheetsUrl,
+      data: testData
     });
     
-    const response = await fetch(sheetsUrl, {
-      method: 'POST',
-      body: formData
-    });
-    
-    if (response.ok) {
+    if (response.success) {
       showStatus('✅ Connection successful! Test data sent to sheet.', 'success');
     } else {
-      showStatus('❌ Connection failed. Status: ' + response.status, 'error');
+      showStatus('❌ Connection failed: ' + response.error, 'error');
     }
   } catch (error) {
     showStatus('❌ Connection error: ' + error.message, 'error');
