@@ -14,10 +14,45 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
-// Handle messages from content script (for future use)
+// Handle messages from content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'sessionComplete') {
-    console.log('Session completed:', message.data);
-    // Could add additional processing here
+  if (message.type === 'sendToSheets') {
+    // Handle Google Sheets upload
+    handleSheetsUpload(message.url, message.data)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    
+    return true; // Keep message channel open for async response
+  }
+  
+  if (message.type === 'testConnection') {
+    // Handle connection test
+    handleSheetsUpload(message.url, message.data)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    
+    return true; // Keep message channel open for async response
   }
 });
+
+async function handleSheetsUpload(url, data) {
+  try {
+    const formData = new URLSearchParams();
+    Object.keys(data).forEach(key => {
+      formData.append(key, data[key]);
+    });
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (response.ok) {
+      return { success: true };
+    } else {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
