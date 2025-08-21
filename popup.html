@@ -1,121 +1,188 @@
-// Popup script for Zetamac Coach
-document.addEventListener('DOMContentLoaded', async () => {
-  // Load current settings
-  await loadSettings();
-  await loadStats();
-  
-  // Event listeners
-  document.getElementById('save-settings').addEventListener('click', saveSettings);
-  document.getElementById('test-connection').addEventListener('click', testConnection);
-  document.getElementById('clear-data').addEventListener('click', clearData);
-});
-
-async function loadSettings() {
-  try {
-    const result = await chrome.storage.sync.get(['sheetsUrl']);
-    if (result.sheetsUrl) {
-      document.getElementById('sheets-url').value = result.sheetsUrl;
-    }
-  } catch (error) {
-    console.error('Error loading settings:', error);
-  }
-}
-
-async function saveSettings() {
-  const sheetsUrl = document.getElementById('sheets-url').value.trim();
-  
-  try {
-    await chrome.storage.sync.set({ sheetsUrl: sheetsUrl });
-    showStatus('Settings saved successfully!', 'success');
-  } catch (error) {
-    showStatus('Error saving settings: ' + error.message, 'error');
-  }
-}
-
-async function testConnection() {
-  const sheetsUrl = document.getElementById('sheets-url').value.trim();
-  
-  if (!sheetsUrl) {
-    showStatus('Please enter a Google Apps Script URL first', 'warning');
-    return;
-  }
-  
-  showStatus('Testing connection...', 'warning');
-  
-  try {
-    const testData = {
-      timestamp: new Date().toISOString(),
-      gameMode: 'test',
-      finalScore: 0,
-      totalQuestions: 0,
-      duration: 0,
-      avgResponseTime: 0,
-      questions: JSON.stringify([])
-    };
-    
-    // Send through background script
-    const response = await chrome.runtime.sendMessage({
-      type: 'testConnection',
-      url: sheetsUrl,
-      data: testData
-    });
-    
-    if (response.success) {
-      showStatus('✅ Connection successful! Test data sent to sheet.', 'success');
-    } else {
-      showStatus('❌ Connection failed: ' + response.error, 'error');
-    }
-  } catch (error) {
-    showStatus('❌ Connection error: ' + error.message, 'error');
-  }
-}
-
-async function loadStats() {
-  try {
-    const result = await chrome.storage.local.get(['sessions']);
-    const sessions = result.sessions || [];
-    
-    if (sessions.length === 0) {
-      return;
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 300px;
+      padding: 15px;
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      background: #f8f9fa;
     }
     
-    // Calculate stats
-    const totalSessions = sessions.length;
-    const bestScore = Math.max(...sessions.map(s => s.finalScore || 0));
-    const avgScore = Math.round(sessions.reduce((sum, s) => sum + (s.finalScore || 0), 0) / totalSessions);
-    const totalQuestions = sessions.reduce((sum, s) => sum + (s.totalQuestions || 0), 0);
-    
-    // Update UI
-    document.getElementById('total-sessions').textContent = totalSessions;
-    document.getElementById('best-score').textContent = bestScore;
-    document.getElementById('avg-score').textContent = avgScore;
-    document.getElementById('total-questions').textContent = totalQuestions;
-    
-  } catch (error) {
-    console.error('Error loading stats:', error);
-  }
-}
-
-async function clearData() {
-  if (confirm('Are you sure you want to clear all local session data? This cannot be undone.')) {
-    try {
-      await chrome.storage.local.remove(['sessions']);
-      await loadStats(); // Refresh display
-      showStatus('Local data cleared successfully', 'success');
-    } catch (error) {
-      showStatus('Error clearing data: ' + error.message, 'error');
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 2px solid #e9ecef;
     }
-  }
-}
+    
+    .title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #212529;
+      margin: 0;
+    }
+    
+    .subtitle {
+      font-size: 12px;
+      color: #6c757d;
+      margin: 5px 0 0 0;
+    }
+    
+    .config-section {
+      margin-bottom: 20px;
+    }
+    
+    .section-title {
+      font-weight: 600;
+      color: #495057;
+      margin-bottom: 10px;
+    }
+    
+    .input-group {
+      margin-bottom: 15px;
+    }
+    
+    label {
+      display: block;
+      font-size: 12px;
+      color: #6c757d;
+      margin-bottom: 5px;
+    }
+    
+    input {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    
+    button:hover {
+      background: #0056b3;
+    }
+    
+    button.secondary {
+      background: #6c757d;
+    }
+    
+    button.secondary:hover {
+      background: #545b62;
+    }
+    
+    .stats-section {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      border: 1px solid #e9ecef;
+    }
+    
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    
+    .stat-item:last-child {
+      margin-bottom: 0;
+    }
+    
+    .stat-label {
+      color: #6c757d;
+      font-size: 12px;
+    }
+    
+    .stat-value {
+      font-weight: 600;
+      color: #212529;
+    }
+    
+    .status {
+      text-align: center;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-bottom: 15px;
+    }
+    
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    .status.warning {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+    }
+    
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 class="title">🎯 Zetamac Coach</h1>
+    <p class="subtitle">Smart Performance Tracking</p>
+  </div>
 
-function showStatus(message, type) {
-  const statusEl = document.getElementById('status-message');
-  statusEl.textContent = message;
-  statusEl.className = `status ${type}`;
-  statusEl.style.display = 'block';
-  
-  // Auto-hide after 3 seconds
-  setTimeout(() => {
-    statusEl.style.display = 'none';
-  }, 3000);
-}
+  <div id="status-message" class="status" style="display: none;"></div>
+
+  <div class="config-section">
+    <div class="section-title">Google Sheets Integration</div>
+    <div class="input-group">
+      <label for="sheets-url">Apps Script Web App URL:</label>
+      <input type="url" id="sheets-url" placeholder="https://script.google.com/...">
+    </div>
+    <button id="save-settings">Save Settings</button>
+    <button id="test-connection" class="secondary">Test Connection</button>
+  </div>
+
+  <div class="stats-section">
+    <div class="section-title">Recent Stats</div>
+    <div id="stats-content">
+      <div class="stat-item">
+        <span class="stat-label">Total Sessions:</span>
+        <span class="stat-value" id="total-sessions">-</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Best Score:</span>
+        <span class="stat-value" id="best-score">-</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Avg Score:</span>
+        <span class="stat-value" id="avg-score">-</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Total Questions:</span>
+        <span class="stat-value" id="total-questions">-</span>
+      </div>
+    </div>
+  </div>
+
+  <button id="clear-data" class="secondary">Clear Local Data</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>
