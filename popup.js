@@ -43,22 +43,14 @@ async function testConnection() {
   showStatus('Testing connection...', 'warning');
   
   try {
-    const testData = {
-      timestamp: new Date().toISOString(),
-      gameMode: 'test',
-      finalScore: 0,
-      totalQuestions: 0,
-      duration: 0,
-      avgResponseTime: 0,
-      questions: JSON.stringify([])
-    };
+    const formData = new URLSearchParams();
+    Object.keys(testData).forEach(key => {
+      formData.append(key, testData[key]);
+    });
     
     const response = await fetch(sheetsUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(testData)
+      body: formData
     });
     
     if (response.ok) {
