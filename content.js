@@ -217,12 +217,15 @@ class ZetamacCoach {
         questions: JSON.stringify(sessionData.questions) // Raw question data
       };
       
+      // Use form data instead of JSON to avoid CORS preflight
+      const formData = new URLSearchParams();
+      Object.keys(payload).forEach(key => {
+        formData.append(key, payload[key]);
+      });
+      
       const response = await fetch(this.sheetsUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload)
+        body: formData
       });
       
       if (response.ok) {
