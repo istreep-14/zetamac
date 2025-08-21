@@ -217,21 +217,17 @@ class ZetamacCoach {
         questions: JSON.stringify(sessionData.questions) // Raw question data
       };
       
-      // Use form data instead of JSON to avoid CORS preflight
-      const formData = new URLSearchParams();
-      Object.keys(payload).forEach(key => {
-        formData.append(key, payload[key]);
+      // Send through background script to avoid CORS issues
+      const response = await chrome.runtime.sendMessage({
+        type: 'sendToSheets',
+        url: this.sheetsUrl,
+        data: payload
       });
       
-      const response = await fetch(this.sheetsUrl, {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (response.ok) {
+      if (response.success) {
         console.log('Zetamac Coach: Data sent to Google Sheets');
       } else {
-        console.error('Zetamac Coach: Failed to send to Google Sheets:', response.status);
+        console.error('Zetamac Coach: Failed to send to Google Sheets:', response.error);
       }
     } catch (error) {
       console.error('Zetamac Coach: Error sending to Google Sheets:', error);
